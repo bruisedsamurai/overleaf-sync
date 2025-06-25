@@ -88,10 +88,19 @@ class OverleafClient(object):
         Returns: List of project objects
         """
         projects_page = reqs.get(PROJECT_URL, cookies=self._cookie)
-        blob = BeautifulSoup(projects_page.content, 'html.parser').find('meta', {'name': 'ol-prefetchedProjectsBlob'})
-        if not blob:                   # fallback for very old CE instances
-           blob = BeautifulSoup(projects_page.content, 'html.parser').find('meta', {'name': 'ol-projects'})       
-        json_content = json.loads(blob.get('content'))['projects']
+
+        # Overleaf moved the project list to a different <meta> tag in 2024
+        soup = BeautifulSoup(projects_page.content, "html.parser")
+        meta = (
+            soup.find("meta", {"name": "ol-prefetchedProjectsBlob"})
+            or soup.find("meta", {"name": "ol-projects"})
+        )
+        if meta is None:
+            raise ValueError(
+                "Could not locate project list meta tag — Overleaf page format changed"
+            )
+
+        json_content = json.loads(meta["content"])["projects"]
         return list(OverleafClient.filter_projects(json_content))
 
     def get_project(self, project_name):
@@ -100,13 +109,21 @@ class OverleafClient(object):
         Params: project_name, the name of the project
         Returns: project object
         """
-
         projects_page = reqs.get(PROJECT_URL, cookies=self._cookie)
-        blob = BeautifulSoup(projects_page.content, 'html.parser').find('meta', {'name': 'ol-prefetchedProjectsBlob'})
-        if not blob:                   # fallback for very old CE instances
-           blob = BeautifulSoup(projects_page.content, 'html.parser').find('meta', {'name': 'ol-projects'})       
-        json_content = json.loads(blob.get('content'))['projects']
-        return next(OverleafClient.filter_projects(json_content, {"name": project_name}), None)
+        soup = BeautifulSoup(projects_page.content, "html.parser")
+        meta = (
+            soup.find("meta", {"name": "ol-prefetchedProjectsBlob"})
+            or soup.find("meta", {"name": "ol-projects"})
+        )
+        if meta is None:
+            raise ValueError(
+                "Could not locate project list meta tag — Overleaf page format changed"
+            )
+
+        json_content = json.loads(meta["content"])["projects"]
+        return next(
+            OverleafClient.filter_projects(json_content, {"name": project_name}), None
+        )
 
     def download_project(self, project_id):
         """
@@ -165,12 +182,15 @@ class OverleafClient(object):
             nonlocal project_infos
             project_infos = project_infos_dict
 
-        # Convert cookie from CookieJar to string
-        # Overleaf (SaaS) dropped sharelatex.sid in 2024 → fall back
-        sess = self._cookie.get("sharelatex.sid") or self._cookie.get("overleaf_session2")
-        if not sess:
-            raise ValueError("No valid Overleaf session cookie found")
-        cookie = f"GCLB={self._cookie['GCLB']}; overleaf_session2={sess}"
+        # ---------- Build a valid Cookie header ----------
+        # Overleaf dropped 'sharelatex.sid' in 2024; fall back to the new cookie.
+        session_cookie = (
+            self._cookie.get("sharelatex.sid") or self._cookie.get("overleaf_session2")
+        )
+        if not session_cookie:
+            raise ValueError("No valid Overleaf session cookie found in .olauth")
+
+        cookie = f"GCLB={self._cookie['GCLB']}; overleaf_session2={session_cookie}"
 
         # Connect to Overleaf Socket.IO, send a time parameter and the cookies
         socket_io = SocketIO(
