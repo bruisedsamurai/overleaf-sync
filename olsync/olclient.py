@@ -88,8 +88,10 @@ class OverleafClient(object):
         Returns: List of project objects
         """
         projects_page = reqs.get(PROJECT_URL, cookies=self._cookie)
-        json_content = json.loads(
-            BeautifulSoup(projects_page.content, 'html.parser').find('meta', {'name': 'ol-projects'}).get('content'))
+        blob = BeautifulSoup(projects_page.content, 'html.parser').find('meta', {'name': 'ol-prefetchedProjectsBlob'})
+        if not blob:                   # fallback for very old CE instances
+           blob = BeautifulSoup(projects_page.content, 'html.parser').find('meta', {'name': 'ol-projects'})       
+        json_content = json.loads(blob.get('content'))['projects']
         return list(OverleafClient.filter_projects(json_content))
 
     def get_project(self, project_name):
@@ -100,8 +102,10 @@ class OverleafClient(object):
         """
 
         projects_page = reqs.get(PROJECT_URL, cookies=self._cookie)
-        json_content = json.loads(
-            BeautifulSoup(projects_page.content, 'html.parser').find('meta', {'name': 'ol-projects'}).get('content'))
+        blob = BeautifulSoup(projects_page.content, 'html.parser').find('meta', {'name': 'ol-prefetchedProjectsBlob'})
+        if not blob:                   # fallback for very old CE instances
+           blob = BeautifulSoup(projects_page.content, 'html.parser').find('meta', {'name': 'ol-projects'})       
+        json_content = json.loads(blob.get('content'))['projects']
         return next(OverleafClient.filter_projects(json_content, {"name": project_name}), None)
 
     def download_project(self, project_id):
@@ -162,11 +166,11 @@ class OverleafClient(object):
             project_infos = project_infos_dict
 
         # Convert cookie from CookieJar to string
-        cookie = "GCLB={}; overleaf_session2={}" \
-            .format(
-            self._cookie["GCLB"],
-            self._cookie["overleaf_session2"]
-        )
+        # Overleaf (SaaS) dropped sharelatex.sid in 2024 → fall back
+        sess = self._cookie.get("sharelatex.sid") or self._cookie.get("overleaf_session2")
+        if not sess:
+            raise ValueError("No valid Overleaf session cookie found")
+        cookie = f"GCLB={self._cookie['GCLB']}; overleaf_session2={sess}"
 
         # Connect to Overleaf Socket.IO, send a time parameter and the cookies
         socket_io = SocketIO(
